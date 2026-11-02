@@ -1,0 +1,11 @@
+{
+  "name": "Family Hub — Family Planner",
+  "short_name": "Family Hub",
+  "description": "One place for all your family plans",
+  "start_url": "./?mode=phone",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#fbf9f7",
+  "theme_color": "#7258a5",
+  "icons": [{"src":"assets/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"},{"src":"assets/apple-icon.png","sizes":"180x180","type":"image/png"}]
+}

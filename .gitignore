@@ -1,0 +1,9 @@
+# Never publish secret keys, credentials, or private household media
+.env
+.env.*
+*.pem
+*.key
+secrets/
+private-photos/
+node_modules/
+.DS_Store

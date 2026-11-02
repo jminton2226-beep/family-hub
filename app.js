@@ -1,0 +1,301 @@
+/* Family Hub 2.0 — single shared PWA, two presentations. No privileged credentials in browser. */
+(() => {
+'use strict';
+const CFG = window.FAMILY_CONFIG || {};
+const LIVE = !!(CFG.supabaseUrl && CFG.supabasePublishableKey);
+const sb = LIVE && window.supabase ? window.supabase.createClient(CFG.supabaseUrl, CFG.supabasePublishableKey) : null;
+const $ = id => document.getElementById(id);
+const mode = new URL(location.href).searchParams.get('mode') === 'tv' ? 'tv' : 'phone';
+const state = {
+  mode, demo: !LIVE, user: null, family: null, families: [], entries: [], aisles: [], members: [],
+  rewards: [], points: [], balances:{}, completions: [], display: {view:'rolling',focus_date:today(),follow_today:true},
+  acting: 'demo-alex', tab:'calendar', modal:null, authMode:'login', busy:false, photoIndex:0,
+  photoLinks:{}, lastRenderedDay:today(), settings:{city:'Chicago, IL',lat:41.8781,lng:-87.6298,walmart_store:'Choose a Walmart'},
+  weather:null, channel:null, pendingRefresh:null
+};
+const views = [['rolling','4 weeks'],['month','Month'],['week','Week'],['day','Day'],['agenda','Agenda']];
+function pad(n){return String(n).padStart(2,'0')}
+function today(){return iso(new Date())}
+function iso(d){return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`}
+function asDate(s){const a=String(s||today()).slice(0,10).split('-').map(Number);return new Date(a[0],a[1]-1,a[2])}
+function plus(d,n){return new Date(d.getFullYear(),d.getMonth(),d.getDate()+n)}
+function sun(d){return plus(d,-d.getDay())}
+function fmt(d,opts={month:'short',day:'numeric'}){return asDate(d).toLocaleDateString('en-US',opts)}
+function time(t){if(!t)return 'All day';const [h,m]=t.slice(0,5).split(':').map(Number);return `${h%12||12}:${pad(m)} ${h>=12?'PM':'AM'}`}
+function minutes(t){if(!t)return 9*60;const [h,m]=t.slice(0,5).split(':').map(Number);return h*60+m}
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function id(){return crypto.randomUUID?crypto.randomUUID():'demo-'+Date.now()+'-'+Math.random().toString(16).slice(2)}
+function toast(msg){let el=$('toast');if(!el)return;el.textContent=msg;el.classList.add('show');clearTimeout(toast.t);toast.t=setTimeout(()=>el.classList.remove('show'),3800)}
+function fail(e){console.error(e);toast(e?.message||'Something went wrong')}
+function isAdmin(){return state.demo || state.members.some(m=>m.user_id===state.user?.id && m.role==='admin')}
+function actor(){return state.demo?state.acting:state.user?.id}
+function memberName(uid){return uid?state.members.find(x=>x.user_id===uid)?.display_name||'Unassigned':''}
+function wallet(uid){return !state.demo&&state.balances[uid]!==undefined?state.balances[uid]:state.points.filter(x=>x.user_id===uid).reduce((n,x)=>n+Number(x.delta),0)}
+function due(x,date){return x.type==='chore' && x.occur_on && x.occur_on<=date && (x.repeat_rule==='daily'||x.repeat_rule==='weekly' && asDate(x.occur_on).getDay()===asDate(date).getDay()|| (!x.repeat_rule||x.repeat_rule==='none')&&x.occur_on===date)}
+function completion(x,date){return state.completions.find(c=>c.chore_id===x.id&&c.due_on===date&&!c.reversed_at)}
+function items(type,date){return state.entries.filter(x=>x.type===type && (!date || x.occur_on===date)).sort((a,b)=>(a.start_time||'').localeCompare(b.start_time||''))}
+function effectiveFocus(){return state.display.follow_today?today():state.display.focus_date}
+function weekDays(d){let base=sun(asDate(d));return Array.from({length:7},(_,i)=>iso(plus(base,i)))}
+function daysInView(){const view=state.display.view,focus=asDate(effectiveFocus());
+  if(view==='rolling')return Array.from({length:28},(_,i)=>iso(plus(sun(focus),i)));
+  if(view==='month'){const first=new Date(focus.getFullYear(),focus.getMonth(),1);const last=new Date(focus.getFullYear(),focus.getMonth()+1,0);const base=sun(first);const count=Math.ceil(((last-base)/86400000+1)/7)*7;return Array.from({length:count},(_,i)=>iso(plus(base,i)))}
+  if(view==='week')return weekDays(effectiveFocus());
+  return [effectiveFocus()];
+}
+function rangeTitle(){const a=daysInView();if(state.display.view==='month')return fmt(effectiveFocus(),{month:'long',year:'numeric'});if(state.display.view==='day')return fmt(a[0],{weekday:'long',month:'long',day:'numeric'});return `${fmt(a[0])} – ${fmt(a[a.length-1],{month:'short',day:'numeric',year:'numeric'})}`}
+function demoSeed(){const d=today(), tomorrow=iso(plus(asDate(d),1)), fri=iso(plus(asDate(d),4));return [
+ {id:id(),type:'event',name:'Soccer practice',occur_on:tomorrow,start_time:'17:30',end_time:'18:30',notes:''},
+ {id:id(),type:'event',name:'Movie night',occur_on:fri,start_time:'19:00',end_time:'21:00',notes:''},
+ {id:id(),type:'dinner',name:'Taco night',occur_on:d},{id:id(),type:'dinner',name:'Chicken and rice',occur_on:tomorrow},
+ {id:id(),type:'shopping',name:'Milk',aisle:'Dairy',done:false},{id:id(),type:'shopping',name:'Bananas',aisle:'Produce',done:false},
+ {id:id(),type:'shopping',name:'Pasta',aisle:'A12',done:false},
+ {id:id(),type:'chore',name:'Feed the dog',assigned_to:'Alex',assigned_user_id:'demo-alex',points:10,occur_on:d,repeat_rule:'daily'},
+ {id:id(),type:'chore',name:'Take out trash',assigned_to:'Sam',assigned_user_id:'demo-sam',points:20,occur_on:d,repeat_rule:'weekly'},
+ {id:id(),type:'chore',name:'Clean bedroom',assigned_to:'Alex',assigned_user_id:'demo-alex',points:25,occur_on:d,repeat_rule:'none'}
+]}
+function loadDemo(){state.members=[{user_id:'demo-alex',display_name:'Alex',role:'admin'},{user_id:'demo-sam',display_name:'Sam',role:'member'}];state.family={id:'demo',name:'Our Family'};
+  const read=(key,alt)=>{try{const v=JSON.parse(localStorage.getItem(key));return v??alt}catch{return alt}};
+  state.entries=read('fh_demo_v2',null)||read('fh_demo_v1',null)||demoSeed();
+  state.rewards=read('fh_rewards_v2',[{id:id(),name:'Extra screen time',cost:50,active:true},{id:id(),name:'Pick a movie',cost:75,active:true}]);
+  state.points=read('fh_points_v2',[]);state.completions=read('fh_completions_v2',[]);state.display={...state.display,...read('fh_display_v2',{})};
+  state.settings={...state.settings,...read('fh_settings_v1',{})};state.aisles=read('fh_aisles_v1',[]);state.acting=read('fh_acting_v2',state.acting);saveDemo();
+}
+function saveDemo(){if(!state.demo)return;try{for(const [key,v] of Object.entries({'fh_demo_v2':state.entries,'fh_rewards_v2':state.rewards,'fh_points_v2':state.points,'fh_completions_v2':state.completions,'fh_display_v2':state.display,'fh_settings_v1':state.settings,'fh_aisles_v1':state.aisles,'fh_acting_v2':state.acting}))localStorage.setItem(key,JSON.stringify(v))}catch(e){toast('Browser storage is full; use Supabase for family photos and sharing')}}
+async function families(){const {data,error}=await sb.from('family_members').select('family_id,display_name,role,families(id,name,invite_code,city,lat,lng,walmart_store)').eq('user_id',state.user.id);if(error)throw error;
+  state.families=(data||[]).filter(x=>x.families).map(x=>x.families);
+  state.family=state.families.find(f=>f.id===localStorage.getItem('fh_family_id'))||state.families[0]||null;
+  if(state.family){localStorage.setItem('fh_family_id',state.family.id);state.settings={city:state.family.city,lat:state.family.lat,lng:state.family.lng,walmart_store:state.family.walmart_store};await loadCloud();watch()}
+}
+async function loadCloud(){if(!state.family)return;const fid=state.family.id;
+  const queries=[['family_settings',sb.from('families').select('id,name,invite_code,city,lat,lng,walmart_store').eq('id',fid).single()],['family_entries',sb.from('family_entries').select('*').eq('family_id',fid).order('created_at')],['aisle_memory',sb.from('aisle_memory').select('*').eq('family_id',fid)],['family_members',sb.from('family_members').select('user_id,display_name,role').eq('family_id',fid)],['rewards',sb.from('rewards').select('*').eq('family_id',fid).order('created_at')],['point_transactions',sb.from('point_transactions').select('*').eq('family_id',fid).order('created_at',{ascending:false}).limit(500)],['chore_completions',sb.from('chore_completions').select('*').eq('family_id',fid)],['tv_display_settings',sb.from('tv_display_settings').select('*').eq('family_id',fid).maybeSingle()],['wallets',sb.rpc('get_family_wallets',{p_family_id:fid})]];
+  const results=await Promise.all(queries.map(async([key,q])=>{const r=await q;if(r.error)throw new Error(`${key}: ${r.error.message}. Did you run the v2 SQL upgrade?`);return [key,r.data]}));
+  const o=Object.fromEntries(results);
+  const previousCoordinates=`${state.settings.lat},${state.settings.lng}`;
+  if(o.family_settings){state.family=o.family_settings;state.settings={city:state.family.city,lat:state.family.lat,lng:state.family.lng,walmart_store:state.family.walmart_store};if(previousCoordinates!==`${state.settings.lat},${state.settings.lng}`)getWeather().then(()=>{if(!state.modal)render()}).catch(()=>{})}
+  state.entries=o.family_entries||[];state.aisles=o.aisle_memory||[];state.members=o.family_members||[];state.rewards=o.rewards||[];state.points=o.point_transactions||[];state.balances=Object.fromEntries((o.wallets||[]).map(x=>[x.user_id,Number(x.balance)]));state.completions=o.chore_completions||[];
+  state.display=o.tv_display_settings?{view:o.tv_display_settings.view,focus_date:o.tv_display_settings.focus_date,follow_today:o.tv_display_settings.follow_today}:{view:'rolling',focus_date:today(),follow_today:true};
+  await photoLinks();
+}
+async function photoLinks(){const photos=items('photo').filter(x=>x.photo_path);await Promise.all(photos.map(async p=>{
+ if(state.photoLinks[p.photo_path]?.expires>Date.now()+60000)return;
+ const {data,error}=await sb.storage.from('family-photos').createSignedUrl(p.photo_path,3600);
+ if(!error&&data?.signedUrl)state.photoLinks[p.photo_path]={src:data.signedUrl,expires:Date.now()+3500000};
+}))}
+function photoSrc(p){return p?.photo_data||state.photoLinks[p?.photo_path]?.src||''}
+function watch(){if(!sb||!state.family)return;if(state.channel)sb.removeChannel(state.channel);const fid=state.family.id;
+ let channel=sb.channel('family-hub-v2-'+fid);for(const table of ['family_entries','family_members','aisle_memory','tv_display_settings','rewards','point_transactions','chore_completions']){
+ channel=channel.on('postgres_changes',{event:'*',schema:'public',table,filter:'family_id=eq.'+fid},()=>{
+ clearTimeout(state.pendingRefresh);state.pendingRefresh=setTimeout(()=>refresh().catch(console.error),200);
+ });
+ } channel=channel.on('postgres_changes',{event:'*',schema:'public',table:'families',filter:'id=eq.'+fid},()=>{clearTimeout(state.pendingRefresh);state.pendingRefresh=setTimeout(()=>refresh().catch(console.error),200)});state.channel=channel.subscribe();
+}
+async function refresh(){const editing=state.mode==='phone'&&!!state.modal;if(state.demo){const acting=state.acting;loadDemo();state.acting=acting}else if(state.family)await loadCloud();if(!editing)render()}
+async function init(){if(LIVE&&!sb){$('app').innerHTML='<div class="login-page"><div class="login-card"><h1>Connection unavailable</h1><p>Check Supabase configuration and your Internet connection.</p></div></div>';return}
+ if(state.demo)loadDemo();else{
+  const {data}=await sb.auth.getSession();state.user=data.session?.user||null;if(state.user)await families();
+  sb.auth.onAuthStateChange((_event,session)=>{const user=session?.user||null;if(user?.id===state.user?.id)return;state.user=user;state.family=null;setTimeout(async()=>{try{if(user)await families();render()}catch(e){fail(e)}},0)})
+ }
+ render();getWeather().then(()=>{if(!state.modal)render()}).catch(console.error);
+ setInterval(()=>{if(state.mode==='tv'){if(today()!==state.lastRenderedDay){state.lastRenderedDay=today();render()}const c=$('screen-clock'),d=$('screen-date');if(c)c.textContent=new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});if(d)d.textContent=new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})}},30000);
+ setInterval(()=>{state.photoIndex++;if(state.mode==='tv'&&!state.modal)render()},22000);
+ setInterval(()=>{refresh().catch(console.error)},60000);
+ setInterval(()=>getWeather().then(()=>{if(!state.modal)render()}).catch(console.error),1800000);
+ window.addEventListener('storage',e=>{if(state.demo&&e.key?.startsWith('fh_'))refresh()});
+ if('serviceWorker' in navigator && location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
+}
+async function getWeather(){const {lat,lng}=state.settings;try{
+ const q=new URLSearchParams({latitude:lat,longitude:lng,timezone:'auto',temperature_unit:'fahrenheit',wind_speed_unit:'mph',current:'temperature_2m,apparent_temperature,weather_code,wind_speed_10m',daily:'temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max',forecast_days:'1'});
+ const r=await fetch('https://api.open-meteo.com/v1/forecast?'+q);if(!r.ok)throw Error('Weather not available');state.weather=await r.json();
+ }catch(e){state.weather=null}}
+function weatherType(c){if(c===0)return ['Clear','☀️'];if([1,2].includes(c))return['Partly cloudy','🌤️'];if(c===3)return['Cloudy','☁️'];if([45,48].includes(c))return['Fog','🌫️'];if([51,53,55,61,63,65,80,81,82].includes(c))return['Rain','🌧️'];if([71,73,75,77,85,86].includes(c))return['Snow','❄️'];if([95,96,99].includes(c))return['Thunderstorm','⛈️'];return['Conditions','🌤️']}
+function weatherPanel(){const w=state.weather,c=w?.current,d=w?.daily;
+ if(!w)return '<section class="panel weather-panel"><div class="panel-title">🌤️ Today’s Weather</div><div class="current-summary">Weather unavailable · Check connection or location</div></section>';
+ const [word,em]=weatherType(c.weather_code),detail=(n,v)=>`<div class="weather-detail"><span>${n}</span><b>${esc(v)}</b></div>`;
+ return `<section class="panel weather-panel"><div class="panel-title">🌤️ Today’s Weather</div><div class="weather-top"><span class="weather-emoji">${em}</span><div><div class="current-temp">${Math.round(c.temperature_2m)}°</div><div class="current-summary">${esc(word)} · ${esc(state.settings.city)}</div></div></div><div class="weather-details">${detail('High / Low',`${Math.round(d.temperature_2m_max[0])}° / ${Math.round(d.temperature_2m_min[0])}°`)}${detail('Sunrise',time(d.sunrise[0].split('T')[1]))}${detail('Sunset',time(d.sunset[0].split('T')[1]))}${detail('Rain chance',`${d.precipitation_probability_max[0]??'—'}%`)}${detail('Feels like',`${Math.round(c.apparent_temperature)}°`)}${detail('Wind',`${Math.round(c.wind_speed_10m)} mph`)}</div><div class="weather-credit">Weather: Open-Meteo</div></section>`;
+}
+function monthCell(d,first){const events=items('event',d),dinner=items('dinner',d)[0],other=asDate(d).getMonth()!==asDate(first).getMonth();return `<div class="cal-day ${d===today()?'is-today':''} ${other?'other-month':''}"><b class="day-number">${asDate(d).getDate()}</b><div class="day-events">${events.slice(0,2).map(e=>`<div class="day-event" title="${esc(e.name)}">${e.start_time?esc(time(e.start_time))+' ':''}${esc(e.name)}</div>`).join('')}${events.length>2?`<span class="day-extra">+${events.length-2} more</span>`:''}</div><div class="day-dinner ${!dinner?'empty':''}">🍽️ <span>${esc(dinner?.name||'Dinner —')}</span></div></div>`}
+function gridCalendar(){const d=daysInView(),head=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(x=>`<div class="cal-weekday">${x}</div>`).join('');return `<div class="cal-grid" style="grid-template-rows:26px repeat(${d.length/7}, minmax(0,1fr))">${head}${d.map(x=>monthCell(x,state.display.view==='month'?effectiveFocus():d[0])).join('')}</div>`}
+function timeRange(events){
+ const timed=events.filter(e=>e.start_time);
+ const earliest=timed.length?Math.min(...timed.map(e=>minutes(e.start_time))):7*60;
+ const latest=timed.length?Math.max(...timed.map(e=>minutes(e.end_time||e.start_time)+(!e.end_time?60:0))):21*60;
+ return {start:Math.max(0,Math.min(7,Math.floor(earliest/60))),end:Math.min(24,Math.max(21,Math.ceil(latest/60)))};
+}
+function hourLabel(hour){return `${hour%12||12}${hour>=12?'p':'a'}`}
+function eventBlock(e,range,lane=0,laneCount=1){
+ const total=(range.end-range.start)*60;
+ const start=Math.max(range.start*60,Math.min(range.end*60,minutes(e.start_time)));
+ const finish=Math.max(start+15,Math.min(range.end*60,e.end_time?minutes(e.end_time):start+60));
+ const top=(start-range.start*60)/total*100,ht=Math.max(2,(finish-start)/total*100);
+ const width=100/laneCount;
+ return `<div class="timed-event" style="left:calc(${(lane*width).toFixed(2)}% + 2px);right:calc(${((laneCount-lane-1)*width).toFixed(2)}% + 2px);top:${top.toFixed(2)}%;height:${ht.toFixed(2)}%" title="${esc(e.name)}"><b>${esc(e.name)}</b><small>${esc(time(e.start_time))}</small></div>`
+}
+function timedDayBlocks(date,range){
+ const timed=items('event',date).filter(e=>e.start_time).slice().sort((a,b)=>minutes(a.start_time)-minutes(b.start_time));
+ const groups=[];
+ for(const entry of timed){
+   const begin=minutes(entry.start_time),finish=minutes(entry.end_time||entry.start_time)+(!entry.end_time?60:0);
+   const group=groups[groups.length-1];
+   if(group&&begin<group.maxEnd){group.events.push({entry,begin,finish});group.maxEnd=Math.max(group.maxEnd,finish)}
+   else groups.push({events:[{entry,begin,finish}],maxEnd:finish});
+ }
+ return groups.map(group=>{
+   const laneEnds=[];
+   const laidOut=group.events.map(x=>{
+     let lane=laneEnds.findIndex(end=>end<=x.begin);
+     if(lane===-1){lane=laneEnds.length;laneEnds.push(x.finish)}else laneEnds[lane]=x.finish;
+     return {...x,lane};
+   });
+   return laidOut.map(x=>eventBlock(x.entry,range,x.lane,laneEnds.length)).join('');
+ }).join('');
+}
+function weeklyCalendar(){
+ const days=weekDays(effectiveFocus()),events=days.flatMap(x=>items('event',x)),range=timeRange(events),hours=range.end-range.start;
+ return `<div class="schedule-scroll"><div class="schedule-view"><div class="schedule-headers"><div class="time-header"></div>${days.map(x=>`<div class="schedule-day-head ${x===today()?'selected':''}">${fmt(x,{weekday:'short',month:'short',day:'numeric'})}</div>`).join('')}</div><div class="schedule-allday"><div class="allday-label">All day</div>${days.map(x=>`<div class="schedule-allday-cell">${items('event',x).filter(e=>!e.start_time).map(e=>`<div class="allday-event">${esc(e.name)}</div>`).join('')}</div>`).join('')}</div><div class="schedule-body"><div class="schedule-hour-col">${Array.from({length:hours+1},(_,i)=>`<span style="top:${i/hours*100}%">${hourLabel(range.start+i)}</span>`).join('')}</div>${days.map(x=>`<div class="schedule-column ${x===today()?'selected':''}" style="--schedule-hours:${hours}">${timedDayBlocks(x,range)}</div>`).join('')}</div><div class="schedule-dinners"><div class="dinner-heading">Dinner</div>${days.map(x=>`<div class="dinner-week">🍽️ ${esc(items('dinner',x)[0]?.name||'—')}</div>`).join('')}</div></div></div>`
+}
+function dailyCalendar(){
+ const d=effectiveFocus(),events=items('event',d),range=timeRange(events),hourCount=range.end-range.start;
+ return `<div class="day-timeline">${events.filter(e=>!e.start_time).map(e=>`<div class="daily-allday">All day · ${esc(e.name)}</div>`).join('')}${Array.from({length:hourCount},(_,i)=>{const h=i+range.start;const hourly=events.filter(e=>e.start_time&&minutes(e.start_time)>=h*60&&minutes(e.start_time)<(h+1)*60);return `<div class="hour-line"><span>${hourLabel(h)}</span><div>${hourly.map(e=>`<div class="single-event"><strong>${esc(e.name)}</strong><small>${esc(time(e.start_time))}${e.end_time?' – '+esc(time(e.end_time)):''}</small></div>`).join('')}</div></div>`}).join('')}<div class="single-dinner">🍽️ Dinner: ${esc(items('dinner',d)[0]?.name||'Not planned')}</div></div>`
+}
+function agendaCalendar(){const start=asDate(effectiveFocus()),days=Array.from({length:28},(_,i)=>iso(plus(start,i)));return `<div class="agenda-large">${days.map(d=>{const ev=items('event',d),meal=items('dinner',d)[0];return `<div class="agenda-large-row"><strong>${esc(fmt(d,{weekday:'short',month:'short',day:'numeric'}))}</strong><div>${ev.length?ev.map(e=>`<div class="agenda-large-event"><b>${esc(e.name)}</b><small>${esc(time(e.start_time))}</small></div>`).join(''):'<span class="muted">No events</span>'}<div class="agenda-large-dinner">🍽️ ${esc(meal?.name||'Dinner not planned')}</div></div></div>`}).join('')}</div>`}
+function calendarContent(){if(['rolling','month'].includes(state.display.view))return gridCalendar();if(state.display.view==='week')return weeklyCalendar();if(state.display.view==='day')return dailyCalendar();return agendaCalendar()}
+function calendarHeader(){return `<header class="cal-head"><div class="cal-title">🗓️ Family Calendar <span class="view-indicator">${views.find(v=>v[0]===state.display.view)[1]}</span></div><div class="cal-controls"><span class="cal-span">${esc(rangeTitle())}</span></div></header>`}
+function groupedShop(){const m=new Map();items('shopping').sort((a,b)=>(a.aisle||'Unassigned').localeCompare(b.aisle||'Unassigned',undefined,{numeric:true})||Number(a.done)-Number(b.done)).forEach(x=>{let a=x.aisle||'Unassigned';if(!m.has(a))m.set(a,[]);m.get(a).push(x)});return Array.from(m,([name,items])=>({name,items}))}
+function tvTemplate(){const photos=items('photo').filter(x=>photoSrc(x)),photo=photos.length?photos[state.photoIndex%photos.length]:null;
+ const header=`<div class="tv-topbar"><div class="tv-brand"><span class="brand-logo">⌂</span>${esc(state.family?.name||'Family Hub')}${state.demo?'<span class="demo-chip">DEMO</span>':''}</div><div class="top-right"><span id="screen-date" class="top-date">${new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})}</span><span id="screen-clock" class="top-time">${new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</span></div></div>`;
+ const cal=`<section class="panel calendar-panel v2-calendar ${state.display.view}">${calendarHeader()}${calendarContent()}<div class="cal-legend">TV calendar view is controlled from the iPhone app</div></section>`;
+ if(['week','day','agenda'].includes(state.display.view))return `<div class="tv-app tv-expanded">${header}<div class="tv-expanded-content">${cal}</div></div>`;
+ const choreRows=items('chore').filter(x=>due(x,today()));const groups=groupedShop();
+ return `<div class="tv-app">${header}<div class="tv-columns"><div class="tv-left"><section class="panel photos-panel"><div class="panel-title">📷 Family Photos</div><div class="photo-area">${photo?`<img class="big-photo" src="${esc(photoSrc(photo))}" alt="${esc(photo.name||'Family photo')}">`:'<div class="photo-prompt"><span class="photo-symbol">📸</span><strong>Your favorite moments</strong><span>Add family photos from the iPhone companion</span></div>'}</div><div class="photo-amount">${photos.length?`Photo ${state.photoIndex%photos.length+1} of ${photos.length}`:'Waiting for family photos'}</div></section>${weatherPanel()}</div>${cal}<div class="tv-right"><section class="panel shopping-panel"><div class="panel-title">🛒 Walmart Shopping</div><div class="shopping-content">${groups.length?groups.map(g=>`<div class="aisle-group"><div class="aisle-heading"><span>${esc(g.name)}</span><span>${g.items.length}</span></div>${g.items.map(x=>`<div class="shopping-item ${x.done?'done':''}"><span class="ordered-check">${x.done?'☑':'☐'}</span><span>${esc(x.name)}</span></div>`).join('')}</div>`).join(''):'<div class="shopping-empty">Nothing on the list</div>'}</div><div class="shopping-foot">${esc(state.settings.walmart_store)} · ${items('shopping').filter(x=>!x.done).length} needed</div></section><section class="panel chores-panel"><div class="panel-title">🧹 Today's Chores</div><div class="chore-list">${choreRows.length?choreRows.map(c=>`<div class="chore-card ${completion(c,today())?'done':''}"><span class="checkmark">${completion(c,today())?'☑':'○'}</span><span class="chore-label">${esc(c.name)}<small>${esc(memberName(c.assigned_user_id)||c.assigned_to)}</small></span><span class="points-pill">+${Number(c.points)||0} ★</span></div>`).join(''):'<div class="chore-none">✨ No chores due today</div>'}</div><div class="tv-point-footer">${state.members.map(m=>`<span>${esc(m.display_name)} <b>★ ${wallet(m.user_id)}</b></span>`).join('')}</div></section></div></div></div>`;
+}
+function nameOptions(selected='',allowAll=false){return (allowAll?'<option value="">Choose family member</option>':'')+state.members.map(m=>`<option value="${esc(m.user_id)}" ${m.user_id===selected?'selected':''}>${esc(m.display_name)}${m.role==='admin'?' · parent':''}</option>`).join('')}
+function phoneTemplate(){const labels={calendar:['Family calendar','See every day, whether busy or quiet'],shopping:['Shopping list','Grouped by your Walmart aisles'],chores:["Today's chores",'Complete chores and earn points'],rewards:['Points & rewards','Earn, redeem, and track'],photos:['Family photos','Add favorite memories'],remote:['TV Remote','Choose what your Vizio shows'],settings:['Family settings','Manage your shared home']};const [title,sub]=labels[state.tab];const sections={calendar:phoneCalendar,shopping:phoneShopping,chores:phoneChores,rewards:phoneRewards,photos:phonePhotos,remote:phoneRemote,settings:phoneSettings};
+ return `<div class="phone-app"><header class="phone-header"><div class="phone-brand"><span class="brand-logo">⌂</span>${esc(state.family?.name||'Family Hub')}</div><a class="mode-link" href="?mode=tv">TV preview ↗</a></header><div class="phone-titlebar"><div class="eyebrow">${new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})}${state.demo?' · LOCAL DEMO':''}</div><h1 class="phone-title">${title}</h1><p class="phone-subtitle">${sub}</p></div><main class="phone-content">${state.demo?'<div class="hint-banner">Demo mode: edits and TV controls work only in this browser. Connect Supabase to sync with your family and Fire TV Stick.</div>':''}${sections[state.tab]()}</main><nav class="phone-tabs v2-tabs">${[['calendar','🗓️','Calendar'],['shopping','🛒','Shop'],['chores','🧹','Chores'],['rewards','⭐','Points'],['remote','📺','TV'],['photos','📷','Photos'],['settings','⚙️','More']].map(([k,ico,label])=>`<button class="tab-button ${state.tab===k?'active':''}" data-action="tab" data-tab="${k}"><span>${ico}</span>${label}</button>`).join('')}</nav>${state.modal?modalTemplate():''}</div>`;
+}
+function viewButtons(){return `<div class="view-switch">${views.map(([k,label])=>`<button class="${state.display.view===k?'selected':''}" data-action="change-view" data-view="${k}">${label}</button>`).join('')}</div>`}
+function navCalendar(){return `<div class="mobile-card nav-calendar"><div class="card-section-title"><button data-action="move-date" data-amount="-1" class="pill-button">‹ Earlier</button><span>${esc(rangeTitle())}</span><button data-action="move-date" data-amount="1" class="pill-button">Later ›</button></div><button class="text-btn small-btn" data-action="go-today">Jump to today</button></div>`}
+function phoneCalendar(){return `${viewButtons()}${navCalendar()}<div class="stack-actions"><button class="primary-btn" data-action="add" data-type="event">+ Add event</button><button class="secondary-btn" data-action="add" data-type="dinner">+ Plan dinner</button></div>${['rolling','month'].includes(state.display.view)?`<div class="mobile-card phone-calendar-grid"><div class="phone-cal-scroll">${gridCalendar()}</div></div>`:state.display.view==='week'?`<div class="mobile-card phone-week">${weeklyCalendar()}</div>`:state.display.view==='day'?`<div class="mobile-card">${dailyCalendar()}</div>`:`<div class="mobile-card">${agendaCalendar()}</div>`}<div class="card-section-title v2-subtitle">Events & dinners — tap any to edit</div>${daysInView().slice(0,state.display.view==='day'?1:state.display.view==='week'?7:35).map(phoneDate).join('')}`}
+function phoneDate(d){const ev=items('event',d),meal=items('dinner',d)[0];return `<section class="day-agenda"><div class="agenda-dayhead ${d===today()?'today':''}"><b>${esc(fmt(d,{weekday:'short',month:'short',day:'numeric'}))}</b><span class="quiet-count">${ev.length} event${ev.length!==1?'s':''}</span></div><div class="agenda-content">${ev.length?ev.map(x=>`<div class="agenda-event"><span class="event-dot"></span><b>${esc(x.name)}</b><small>${esc(time(x.start_time))}</small><button class="small-icon-btn" data-action="edit" data-id="${esc(x.id)}">✎</button></div>`).join(''):'<div class="muted">No events planned</div>'}<div class="agenda-dinner"><span>🍽️</span><b>${esc(meal?.name||'Dinner not planned')}</b><button class="small-icon-btn" data-action="${meal?'edit':'add'}" data-type="dinner" data-date="${d}" ${meal?`data-id="${esc(meal.id)}"`:''}>${meal?'✎':'+'}</button></div></div></section>`}
+function phoneShopping(){const groups=groupedShop();return `<div class="mobile-card"><div class="card-section-title">${items('shopping').filter(x=>!x.done).length} still needed <button class="primary-btn small-btn" data-action="add" data-type="shopping">+ Add item</button></div>${groups.length?groups.map(g=>`<div class="mobile-aisle"><h3>${esc(g.name)}</h3>${g.items.map(x=>`<div class="phone-shop-row"><input type="checkbox" data-action="check-item" data-id="${esc(x.id)}" ${x.done?'checked':''}><button data-action="edit" data-id="${esc(x.id)}" class="shop-name ${x.done?'done':''}">${esc(x.name)}</button>${x.notes?`<small>${esc(x.notes)}</small>`:''}</div>`).join('')}</div>`).join(''):'<div class="empty-state">Shopping list is clear</div>'}</div>`}
+function phoneChores(){const dueToday=items('chore').filter(x=>due(x,today()));return `<div class="mobile-card"><div class="card-section-title">Chores for today <button class="primary-btn small-btn" data-action="add" data-type="chore">+ Add chore</button></div>${state.demo?`<div class="demo-actor"><label>Try completing as</label><select id="acting" data-action="acting">${nameOptions(state.acting)}</select></div>`:''}${dueToday.length?dueToday.map(c=>`<div class="phone-chore-row"><input type="checkbox" data-action="check-chore" data-id="${esc(c.id)}" ${completion(c,today())?'checked':''} ${!state.demo&&actor()!==c.assigned_user_id&&!isAdmin()?'disabled':''}><button class="chore-main" data-action="edit" data-id="${esc(c.id)}"><strong>${esc(c.name)}</strong><small>${esc(memberName(c.assigned_user_id)||c.assigned_to||'Unassigned')} · ${c.repeat_rule==='daily'?'Daily':c.repeat_rule==='weekly'?'Weekly':'One time'}</small></button><span class="points-pill">+${Number(c.points)||0} ★</span></div>`).join(''):'<div class="empty-state">No chores due today</div>'}</div><section class="mobile-card"><div class="card-section-title">All chore assignments</div>${items('chore').map(x=>`<div class="simple-row"><div><b>${esc(x.name)}</b><small>${esc(memberName(x.assigned_user_id)||x.assigned_to||'Unassigned')} · ${esc(fmt(x.occur_on))} · ${esc(x.repeat_rule||'none')} · ${Number(x.points)||0} pts</small></div><button class="small-icon-btn" data-action="edit" data-id="${esc(x.id)}">✎</button></div>`).join('')||'<div class="muted">None yet</div>'}</section>`}
+function phoneRewards(){const target=state.demo?state.acting:state.user.id;return `<section class="mobile-card"><div class="card-section-title">Family point balances</div><div class="wallet-grid">${state.members.map(m=>`<div class="wallet-card"><small>${esc(m.display_name)}</small><b>★ ${wallet(m.user_id)}</b></div>`).join('')}</div>${state.demo?'<p class="setting-note">Use the Chores tab to select a demo family member.</p>':''}</section><section class="mobile-card"><div class="card-section-title">Reward catalog ${isAdmin()?'<button class="primary-btn small-btn" data-action="add-reward">+ Reward</button>':''}</div>${state.rewards.filter(x=>x.active).map(r=>`<div class="reward-row"><div><b>${esc(r.name)}</b><small>${Number(r.cost)} points</small></div><div class="reward-actions">${isAdmin()?`<button class="small-icon-btn" data-action="edit-reward" data-id="${esc(r.id)}">✎</button>`:''}<button class="primary-btn small-btn" data-action="redeem" data-id="${esc(r.id)}">Redeem</button></div></div>`).join('')||'<div class="muted">No rewards yet</div>'}</section>${isAdmin()?`<section class="mobile-card"><div class="card-section-title">Parent point adjustments</div><form id="adjust-form"><label class="field-label">Family member</label><select class="field-input" name="user_id">${nameOptions(state.members[0]?.user_id)}</select><label class="field-label">Point change (+ or −)</label><input class="field-input" type="number" name="delta" min="-100000" max="100000" placeholder="e.g. -25" required><label class="field-label">Reason</label><input class="field-input" name="reason" maxlength="200" minlength="2" required placeholder="e.g. Redeemed a treat"><button class="primary-btn" type="submit">Record adjustment</button></form></section>`:''}<section class="mobile-card"><div class="card-section-title">Points history</div>${state.points.slice(0,35).map(t=>`<div class="history-row"><span><b>${esc(memberName(t.user_id))}</b><small>${esc(t.note||t.kind)} · ${esc(fmt(t.created_at?.slice(0,10)||today()))}</small></span><strong class="${t.delta>0?'earned':'spent'}">${t.delta>0?'+':''}${t.delta}</strong></div>`).join('')||'<div class="muted">No point transactions yet. Complete a chore to earn points.</div>'}</section>`}
+function phoneRemote(){return `<section class="mobile-card"><div class="card-section-title">📺 Vizio + Fire TV Stick</div><p class="phone-subtitle">Open the GitHub Pages address in Amazon Silk with <code>?mode=tv</code>. Your iPhone controls the view below.</p><div class="remote-screen"><span>📺</span><b>${views.find(x=>x[0]===state.display.view)[1]} view</b><small>${esc(rangeTitle())}</small></div><div class="setting-label">Display a calendar view</div>${viewButtons()}<div class="remote-nav"><button class="secondary-btn" data-action="move-date" data-amount="-1">← Previous</button><button class="secondary-btn" data-action="go-today">Today</button><button class="secondary-btn" data-action="move-date" data-amount="1">Next →</button></div><button class="secondary-btn" data-action="tv-link">Copy TV address</button><p class="setting-note">Week, Day, and Agenda automatically expand the calendar across the TV. Rolling and Month retain photos, weather, Walmart shopping, and today's chores.</p></section>`}
+function phonePhotos(){const all=items('photo');return `<section class="mobile-card"><div class="card-section-title">Family album <button class="primary-btn small-btn" data-action="add" data-type="photo">+ Photo</button></div><div class="photo-gallery">${all.map(p=>`<button class="gallery-card" data-action="edit" data-id="${esc(p.id)}"><div class="gallery-img">${photoSrc(p)?`<img src="${esc(photoSrc(p))}" alt="${esc(p.name)}">`:'📷'}</div><small>${esc(p.name||'Family memory')}</small></button>`).join('')}</div>${all.length?'':'<div class="empty-state">Add a family photo to start the slideshow.</div>'}</section>`}
+function phoneSettings(){return `<section class="mobile-card"><div class="card-section-title">📺 TV access</div><p class="phone-subtitle">Use a Fire TV Stick with the Amazon Silk browser. Bookmark the hosted Family Hub URL ending in <code>?mode=tv</code>.</p><button class="secondary-btn" data-action="tv-link">Copy TV address</button></section><section class="mobile-card"><div class="card-section-title">🌤️ Weather location & Walmart</div><form id="settings-form"><label class="field-label">City</label><input class="field-input" name="city" value="${esc(state.settings.city)}" required><div class="form-row"><div><label class="field-label">Latitude</label><input class="field-input" name="lat" type="number" step="any" value="${esc(state.settings.lat)}" required></div><div><label class="field-label">Longitude</label><input class="field-input" name="lng" type="number" step="any" value="${esc(state.settings.lng)}" required></div></div><button class="secondary-btn small-btn" type="button" data-action="find-location">Find city coordinates</button><label class="field-label">Preferred Walmart</label><input class="field-input" name="walmart" value="${esc(state.settings.walmart_store)}"><p class="setting-note">Walmart aisle assignments are entered by family members and remembered. This app does not automatically retrieve store-specific aisle maps.</p><button class="primary-btn" type="submit">Save settings</button></form></section>${LIVE?`<section class="mobile-card"><div class="card-section-title">👨‍👩‍👧 Family members</div>${state.members.map(m=>`<div class="simple-row"><div><b>${esc(m.display_name)}</b><small>${m.role==='admin'?'Parent / admin':'Member'}</small></div>${isAdmin()&&m.user_id!==state.user.id?`<button class="secondary-btn small-btn" data-action="toggle-admin" data-id="${esc(m.user_id)}" data-admin="${m.role!=='admin'}">${m.role==='admin'?'Remove admin':'Make admin'}</button>`:''}</div>`).join('')}<div class="setting-label">Private family invite code</div><div class="family-code">${esc(state.family.invite_code)}</div><button class="secondary-btn" data-action="copy-code">Copy code</button><p class="setting-note">Keep this code private. Each family member signs in with their own email. Admins can edit rewards and point adjustments.</p><button class="secondary-btn small-btn" data-action="switch-family">Switch family</button> <button class="text-btn" data-action="logout">Log out</button></section>`:`<section class="mobile-card"><div class="hint-banner">LOCAL DEMO · Connect Supabase to share changes with the TV and other family devices.</div><button class="danger-btn" data-action="reset-demo">Reset sample data</button></section>`}`}
+function field(label,key,val='',type='text',extra=''){return `<label class="field-label" for="f-${key}">${label}</label><input class="field-input" type="${type}" id="f-${key}" name="${key}" value="${esc(val)}" ${extra}>`}
+function options(key,all,selected){return `<select class="field-input" name="${key}">${all.map(([value,label])=>`<option value="${esc(value)}" ${value===selected?'selected':''}>${esc(label)}</option>`).join('')}</select>`}
+function modalTemplate(){const {type,item={},date}=state.modal,editing=!!item.id;let body='';
+ if(type==='event')body=field('Event title','name',item.name,'text','required maxlength="120"')+field('Date','occur_on',item.occur_on||date||today(),'date','required')+`<div class="form-row"><div>${field('Start time','start_time',item.start_time?.slice(0,5)||'17:00','time','required')}</div><div>${field('End time','end_time',item.end_time?.slice(0,5)||'18:00','time','required')}</div></div>`+`<label class="field-label"><input type="checkbox" name="all_day" ${editing&&!item.start_time?'checked':''}> All-day event (ignore the times above)</label>`+field('Notes','notes',item.notes||'','text','maxlength="250"');
+ if(type==='dinner')body=field('Dinner','name',item.name,'text','required maxlength="120"')+field('Date','occur_on',item.occur_on||date||today(),'date','required');
+ if(type==='shopping'){
+   const aisle=state.aisles.find(x=>x.item_name===String(item.name||'').toLowerCase())?.aisle||'';
+   body=field('Item name','name',item.name||'','text','required maxlength="120"')+field('Walmart aisle or department','aisle',item.aisle||aisle,'text','required maxlength="80" placeholder="e.g. A12, Produce, Dairy" list="aisle-options"')+`<datalist id="aisle-options">${[...new Set(['Produce','Dairy','Frozen','Bakery','Household',...state.aisles.map(x=>x.aisle),...items('shopping').map(x=>x.aisle)].filter(Boolean))].map(x=>`<option value="${esc(x)}"></option>`).join('')}</datalist>`+field('Quantity or notes','notes',item.notes||'','text','maxlength="120"');
+ }
+ if(type==='chore')body=field('Chore name','name',item.name||'','text','required maxlength="120"')+`<label class="field-label">Assign to family member</label><select class="field-input" name="assigned_user_id" required>${nameOptions(item.assigned_user_id||'',true)}</select>`+field('Points earned when completed','points',item.points??10,'number','min="0" max="10000" required')+field('First due date','occur_on',item.occur_on||today(),'date','required')+`<label class="field-label">Schedule</label>`+options('repeat_rule',[['none','One time'],['daily','Every day'],['weekly','Same weekday, every week']],item.repeat_rule||'none')+`<p class="setting-note">Points are credited to the assigned member only once per scheduled day. Completion is automatic; no approval required.</p>`;
+ if(type==='photo')body=field('Photo caption','name',item.name||'','text','maxlength="120"')+`<label class="field-label">${editing?'Replace photo (optional)':'Choose photo'}</label><input class="field-input" name="image" type="file" accept="image/*" ${editing?'':'required'}><p class="setting-note">Photos are resized on your phone before upload. In cloud mode they are stored privately in Supabase.</p>`;
+ if(type==='reward')body=field('Reward name','name',item.name||'','text','required maxlength="120"')+field('Points cost','cost',item.cost||50,'number','required min="1" max="100000"')+`<label class="field-label"><input type="checkbox" name="active" ${!editing||item.active?'checked':''}> Available for redemption</label>`;
+ if(type==='redeem'){const r=state.rewards.find(x=>x.id===state.modal.id);body=`<p class="phone-subtitle">${esc(r?.name)} costs <b>${Number(r?.cost)||0} points</b>.</p><label class="field-label">Redeem for</label><select class="field-input" name="user_id">${(isAdmin()?state.members:state.members.filter(m=>m.user_id===actor())).map(m=>`<option value="${esc(m.user_id)}">${esc(m.display_name)} (★ ${wallet(m.user_id)})</option>`).join('')}</select><p class="setting-note">Points will be deducted immediately and recorded in the history.</p>`}
+ const title={event:'event',dinner:'dinner',shopping:'shopping item',chore:'chore',photo:'photo',reward:'reward',redeem:'reward'}[type];
+ return `<div class="modal-backdrop"><div class="modal-sheet" role="dialog" aria-modal="true" aria-label="${esc(title)}"><div class="modal-head"><h2>${type==='redeem'?'Redeem':editing?'Edit':'Add'} ${esc(title)}</h2><button class="modal-close" data-action="close-modal" aria-label="Close">×</button></div><form id="modal-form" data-type="${esc(type)}" data-id="${esc(item.id||state.modal.id||'')}">${body}<div class="form-footer">${editing?`<button class="danger-btn" type="button" data-action="delete" data-type="${esc(type)}" data-id="${esc(item.id)}">Delete</button>`:'<span></span>'}<button type="submit" class="primary-btn">${type==='redeem'?'Redeem now':editing?'Save changes':'Add to family'}</button></div></form></div></div>`;
+}
+function loginTemplate(){const create=state.authMode==='register';return `<div class="login-page"><div class="login-card"><div class="brand-logo">⌂</div><h1>Family Hub 2.0</h1><p>Family calendar, dinners, chores, points, and rewards in one place.</p><form id="auth-form"><label class="field-label">Email</label><input class="field-input" name="email" type="email" autocomplete="email" required><label class="field-label">Password</label><input class="field-input" name="password" type="password" autocomplete="${create?'new-password':'current-password'}" required minlength="6"><button type="submit" class="primary-btn">${create?'Create account':'Sign in'}</button></form><button class="text-btn" data-action="auth-mode">${create?'Already have an account? Sign in':'New here? Create an account'}</button></div></div>`}
+function selectFamilyTemplate(){return `<div class="login-page"><div class="login-card"><div class="brand-logo">⌂</div><h1>Set up your family</h1><p>Create a family or join using a private invite code.</p>${state.families.map(f=>`<button class="secondary-btn" data-action="choose-family" data-id="${esc(f.id)}">Use ${esc(f.name)}</button>`).join('')}<form id="create-family-form"><h3>Create a family</h3>${field('Family name','name','','text','required')}${field('Your display name','display_name','','text','required')}<button type="submit" class="primary-btn">Create family</button></form><form id="join-family-form"><h3>Join existing family</h3>${field('Invite code','invite','','text','required')}${field('Your display name','display_name','','text','required')}<button type="submit" class="secondary-btn">Join family</button></form><button class="text-btn" data-action="logout">Log out</button></div></div>`}
+function render(){if(LIVE&&!state.user){$('app').innerHTML=loginTemplate();return}if(LIVE&&!state.family){$('app').innerHTML=selectFamilyTemplate();return}document.title='Family Hub 2.0';$('app').innerHTML=state.mode==='tv'?tvTemplate():phoneTemplate()}
+async function setDisplay(newDisplay){state.display={...state.display,...newDisplay};if(state.demo){saveDemo();render();return}
+ const {error}=await sb.from('tv_display_settings').upsert({family_id:state.family.id,view:state.display.view,focus_date:state.display.focus_date,follow_today:state.display.follow_today,updated_at:new Date().toISOString()},{onConflict:'family_id'});if(error)throw error;render();}
+function movedDate(direction){const d=asDate(effectiveFocus()),view=state.display.view;
+ if(view==='month')return iso(new Date(d.getFullYear(),d.getMonth()+direction,Math.min(d.getDate(),28)));
+ return iso(plus(d,direction*({rolling:28,week:7,day:1,agenda:7}[view]||7)));
+}
+async function saveItem(type,oldId,fd){const old=state.entries.find(x=>x.id===oldId),name=String(fd.get('name')||'').trim();if(!name&&type!=='photo')throw Error('Enter a name');
+ let data={type,name};
+ if(type==='event'){const a=String(fd.get('start_time')),b=String(fd.get('end_time')),allDay=!!fd.get('all_day');if(!allDay&&minutes(b)<=minutes(a))throw Error('End time must be after start time');Object.assign(data,{occur_on:fd.get('occur_on'),start_time:allDay?null:a,end_time:allDay?null:b,notes:fd.get('notes')||''})}
+ if(type==='dinner'){data.occur_on=fd.get('occur_on');if(state.entries.some(x=>x.type==='dinner'&&x.occur_on===data.occur_on&&x.id!==oldId))throw Error('Dinner already exists for this day. Edit it instead.')}
+ if(type==='shopping'){Object.assign(data,{aisle:String(fd.get('aisle')||'Unassigned').trim(),notes:fd.get('notes')||''})}
+ if(type==='chore'){const user=String(fd.get('assigned_user_id')||'');if(!state.members.some(x=>x.user_id===user))throw Error('Assign the chore to a family member');Object.assign(data,{assigned_user_id:user,assigned_to:memberName(user),points:Number(fd.get('points')||0),occur_on:fd.get('occur_on'),repeat_rule:fd.get('repeat_rule')||'none'})}
+ if(type==='photo'){const file=fd.get('image');if(!oldId && (!file||!file.size))throw Error('Select a photo first');if(file?.size){if(!file.type.startsWith('image/'))throw Error('Select an image file');if(file.size>15*1024*1024)throw Error('Photo must be smaller than 15 MB');const compressed=await compress(file);if(state.demo)data.photo_data=await asDataUrl(compressed);else{const path=`${state.family.id}/${id()}.jpg`;const {error}=await sb.storage.from('family-photos').upload(path,compressed,{contentType:'image/jpeg'});if(error)throw error;data.photo_path=path}}}
+ if(state.demo){if(old){Object.assign(old,data)}else state.entries.push({...data,id:id(),done:false});if(type==='shopping')rememberAisle(data);saveDemo()}
+ else{
+  const r=old?await sb.from('family_entries').update(data).eq('id',oldId).eq('family_id',state.family.id):await sb.from('family_entries').insert({...data,family_id:state.family.id,created_by:state.user.id});if(r.error)throw r.error;
+  if(type==='photo'&&old?.photo_path&&data.photo_path){await sb.storage.from('family-photos').remove([old.photo_path]);delete state.photoLinks[old.photo_path]}
+  if(type==='shopping'){await sb.from('aisle_memory').upsert({family_id:state.family.id,item_name:name.toLowerCase(),aisle:data.aisle},{onConflict:'family_id,item_name'})}
+  await loadCloud();
+ }
+ state.modal=null;render();toast(old?'Saved changes':'Added to family');
+}
+function rememberAisle(d){state.aisles=state.aisles.filter(x=>x.item_name!==d.name.toLowerCase());state.aisles.push({item_name:d.name.toLowerCase(),aisle:d.aisle})}
+async function removeItem(type,i){if(type==='reward'){
+  if(state.demo){state.rewards=state.rewards.filter(x=>x.id!==i);saveDemo()}else{const {error}=await sb.from('rewards').delete().eq('id',i).eq('family_id',state.family.id);if(error)throw error;await loadCloud()}
+ }else{
+  const old=state.entries.find(x=>x.id===i);if(state.demo){state.entries=state.entries.filter(x=>x.id!==i);saveDemo()}
+  else{const {error}=await sb.from('family_entries').delete().eq('id',i).eq('family_id',state.family.id);if(error)throw error;if(old?.photo_path)await sb.storage.from('family-photos').remove([old.photo_path]);await loadCloud()}
+ }state.modal=null;render();toast('Deleted');
+}
+async function toggleShopping(i,on){const entry=state.entries.find(x=>x.id===i);if(!entry)return;
+ if(state.demo){entry.done=on;saveDemo()}else{const {error}=await sb.from('family_entries').update({done:on}).eq('id',i).eq('family_id',state.family.id);if(error)throw error;await loadCloud()}render()}
+async function toggleChore(i,on){const c=state.entries.find(x=>x.id===i);if(!c)return;const person=c.assigned_user_id;if(!person)throw Error('Edit this chore to assign a family member first');
+ if(state.demo){if(state.acting!==person&&!isAdmin())throw Error('Only the assigned member or parent can complete this chore');const old=completion(c,today());if(on&&!old){if(state.completions.some(x=>x.chore_id===i&&x.due_on===today())){const x=state.completions.find(x=>x.chore_id===i&&x.due_on===today());x.reversed_at=null;x.credited_points=Number(c.points)||0}else state.completions.push({family_id:'demo',chore_id:i,due_on:today(),assignee_user_id:person,credited_points:Number(c.points)||0,reversed_at:null});if(c.points>0)state.points.unshift({id:id(),user_id:person,delta:Number(c.points),kind:'earn',note:c.name,created_at:new Date().toISOString()})}
+ if(!on&&old){if(wallet(person)<Number(old.credited_points))throw Error('Those points have already been spent; an admin adjustment is required');old.reversed_at=new Date().toISOString();if(old.credited_points>0)state.points.unshift({id:id(),user_id:person,delta:-old.credited_points,kind:'undo',note:'Undid: '+c.name,created_at:new Date().toISOString()})}saveDemo()}
+ else{const {error}=await sb.rpc('set_chore_completion',{p_chore_id:i,p_due_on:today(),p_complete:on});if(error)throw error;await loadCloud()}
+ render();toast(on?`Chore complete! +${c.points||0} points for ${memberName(person)}`:'Chore completion reversed');
+}
+async function saveReward(i,fd){if(!isAdmin())throw Error('Only parents can manage rewards');const data={name:String(fd.get('name')||'').trim(),cost:Number(fd.get('cost')),active:!!fd.get('active')};if(!data.name||data.cost<1)throw Error('Check reward name and cost');
+ if(state.demo){const old=state.rewards.find(r=>r.id===i);if(old)Object.assign(old,data);else state.rewards.push({...data,id:id()});saveDemo()}
+ else{const q=i?sb.from('rewards').update(data).eq('id',i).eq('family_id',state.family.id):sb.from('rewards').insert({...data,family_id:state.family.id});const {error}=await q;if(error)throw error;await loadCloud()}
+ state.modal=null;render();toast('Reward saved')}
+async function redeem(i,uid){const r=state.rewards.find(x=>x.id===i&&x.active);if(!r)throw Error('Reward is unavailable');if(uid!==actor()&&!isAdmin())throw Error('Only parents may redeem for someone else');if(wallet(uid)<r.cost)throw Error('Not enough points');
+ if(state.demo){state.points.unshift({id:id(),user_id:uid,delta:-r.cost,kind:'redeem',note:r.name,created_at:new Date().toISOString()});saveDemo()}
+ else{const {error}=await sb.rpc('redeem_family_reward',{p_reward_id:i,p_user_id:uid});if(error)throw error;await loadCloud()}
+ state.modal=null;render();toast('Reward redeemed — '+r.cost+' points spent')}
+async function adjust(uid,delta,reason){if(!isAdmin())throw Error('Only parents can adjust points');if(!Number.isSafeInteger(delta)||!delta||Math.abs(delta)>100000)throw Error('Enter a valid point change');if(reason.trim().length<2)throw Error('Provide a reason');
+ if(state.demo){if(wallet(uid)+delta<0)throw Error('Insufficient points');state.points.unshift({id:id(),user_id:uid,delta,kind:'manual',note:reason,created_at:new Date().toISOString()});saveDemo()}
+ else{const {error}=await sb.rpc('adjust_family_points',{p_family_id:state.family.id,p_user_id:uid,p_delta:delta,p_reason:reason});if(error)throw error;await loadCloud()}
+ render();toast('Point adjustment recorded')}
+function asDataUrl(blob){return new Promise((ok,no)=>{const reader=new FileReader();reader.onload=()=>ok(reader.result);reader.onerror=no;reader.readAsDataURL(blob)})}
+function compress(file){return new Promise((ok,no)=>{const img=new Image(),src=URL.createObjectURL(file);img.onload=()=>{URL.revokeObjectURL(src);const scale=Math.min(1,1300/Math.max(img.width,img.height));const c=document.createElement('canvas');c.width=Math.round(img.width*scale);c.height=Math.round(img.height*scale);c.getContext('2d').drawImage(img,0,0,c.width,c.height);c.toBlob(x=>x?ok(x):no(Error('Image compression failed')),'image/jpeg',.76)};img.onerror=()=>{URL.revokeObjectURL(src);no(Error('Unable to open photo'))};img.src=src})}
+function copy(v){if(navigator.clipboard?.writeText)navigator.clipboard.writeText(v).then(()=>toast('Copied!')).catch(()=>prompt('Copy this link:',v));else prompt('Copy this link:',v)}
+function tvUrl(){const u=new URL(location.href);u.searchParams.set('mode','tv');return u.href}
+// Interactions are delegated so rendering/replacing one screen never loses handlers.
+document.addEventListener('click',async e=>{const b=e.target.closest('button[data-action]');if(!b)return;const a=b.dataset.action,i=b.dataset.id;
+ try{
+ if(a==='tab'){state.tab=b.dataset.tab;state.modal=null;render();scrollTo(0,0)}
+ else if(a==='add'){state.modal={type:b.dataset.type,date:b.dataset.date||today()};render()}
+ else if(a==='edit'){const x=state.entries.find(x=>x.id===i);if(x){state.modal={type:x.type,item:x};render()}}
+ else if(a==='add-reward'){state.modal={type:'reward'};render()}
+ else if(a==='edit-reward'){state.modal={type:'reward',item:state.rewards.find(r=>r.id===i)};render()}
+ else if(a==='redeem'){state.modal={type:'redeem',id:i};render()}
+ else if(a==='close-modal'){state.modal=null;render()}
+ else if(a==='change-view'){await setDisplay({view:b.dataset.view})}
+ else if(a==='move-date'){await setDisplay({focus_date:movedDate(Number(b.dataset.amount)),follow_today:false})}
+ else if(a==='go-today'){await setDisplay({focus_date:today(),follow_today:true})}
+ else if(a==='delete'){if(confirm('Delete this for the whole family?'))await removeItem(b.dataset.type,i)}
+ else if(a==='tv-link')copy(tvUrl())
+ else if(a==='auth-mode'){state.authMode=state.authMode==='login'?'register':'login';render()}
+ else if(a==='choose-family'){state.family=state.families.find(f=>f.id===i);localStorage.setItem('fh_family_id',i);state.settings={city:state.family.city,lat:state.family.lat,lng:state.family.lng,walmart_store:state.family.walmart_store};await loadCloud();watch();await getWeather();render()}
+ else if(a==='switch-family'){state.family=null;if(state.channel)sb.removeChannel(state.channel);render()}
+ else if(a==='logout'){await sb.auth.signOut();state.user=null;state.family=null;render()}
+ else if(a==='copy-code')copy(state.family.invite_code)
+ else if(a==='toggle-admin'){if(!isAdmin())throw Error('Admin only');const yes=b.dataset.admin==='true';if(!confirm((yes?'Make this member a parent/admin?':'Remove parent/admin access?')))return;const {error}=await sb.rpc('set_family_admin',{p_family_id:state.family.id,p_user_id:i,p_admin:yes});if(error)throw error;await loadCloud();render()}
+ else if(a==='reset-demo'){if(confirm('Erase all local demo data?')){['fh_demo_v2','fh_demo_v1','fh_rewards_v2','fh_points_v2','fh_completions_v2','fh_display_v2','fh_settings_v1','fh_aisles_v1'].forEach(x=>localStorage.removeItem(x));loadDemo();render()}}
+ else if(a==='find-location'){const form=$('settings-form');const q=new URLSearchParams({name:form.elements.city.value,count:'1',language:'en',format:'json'});const r=await fetch('https://geocoding-api.open-meteo.com/v1/search?'+q);if(!r.ok)throw Error('Location service unavailable');const data=await r.json(),p=data.results?.[0];if(!p)throw Error('City not found. Try adding state.');form.elements.city.value=p.name+(p.admin1?', '+p.admin1:'');form.elements.lat.value=p.latitude;form.elements.lng.value=p.longitude;toast('Coordinates found. Save settings to apply.')}
+ }catch(err){fail(err)}
+});
+document.addEventListener('change',async e=>{const t=e.target;
+ try{if(t.matches('[data-action="check-item"]'))await toggleShopping(t.dataset.id,t.checked);
+ else if(t.matches('[data-action="check-chore"]'))await toggleChore(t.dataset.id,t.checked);
+ else if(t.id==='acting'){state.acting=t.value;saveDemo();render()}
+ }catch(err){fail(err);render()}
+});
+document.addEventListener('input',e=>{const t=e.target;if(t.name==='name'&&t.closest('form[data-type="shopping"]')){const aisle=t.form.elements.aisle,match=state.aisles.find(a=>a.item_name===t.value.trim().toLowerCase());if(match&&(!aisle.value||aisle.dataset.auto==='yes')){aisle.value=match.aisle;aisle.dataset.auto='yes'}}if(t.name==='aisle')t.dataset.auto='no'});
+document.addEventListener('submit',async e=>{const form=e.target;if(!['modal-form','adjust-form','auth-form','create-family-form','join-family-form','settings-form'].includes(form.id))return;e.preventDefault();if(state.busy)return;state.busy=true;const btn=form.querySelector('button[type="submit"]');if(btn)btn.disabled=true;
+ try{const fd=new FormData(form);
+ if(form.id==='modal-form'){const {type,id:i}=form.dataset;if(type==='reward')await saveReward(i,fd);else if(type==='redeem')await redeem(i,String(fd.get('user_id')));else await saveItem(type,i,fd)}
+ else if(form.id==='adjust-form')await adjust(String(fd.get('user_id')),Number(fd.get('delta')),String(fd.get('reason')||''))
+ else if(form.id==='settings-form'){const city=String(fd.get('city')||'').trim(),lat=Number(fd.get('lat')),lng=Number(fd.get('lng')),walmart_store=String(fd.get('walmart')||'').trim();if(!city||Math.abs(lat)>90||Math.abs(lng)>180||!Number.isFinite(lat)||!Number.isFinite(lng))throw Error('Check your location');const settings={city,lat,lng,walmart_store};if(state.demo)Object.assign(state.settings,settings);else{const {error}=await sb.from('families').update(settings).eq('id',state.family.id);if(error)throw error;Object.assign(state.family,settings);Object.assign(state.settings,settings)}saveDemo();await getWeather();render();toast('Settings saved')}
+ else if(form.id==='auth-form'){const email=String(fd.get('email')).trim(),password=String(fd.get('password'));if(state.authMode==='register'){const {data,error}=await sb.auth.signUp({email,password});if(error)throw error;if(!data.session){state.authMode='login';render();toast('Check your email to confirm your account') }else{state.user=data.user;await families();render()}}else{const {data,error}=await sb.auth.signInWithPassword({email,password});if(error)throw error;state.user=data.user;await families();render()}}
+ else if(form.id==='create-family-form'){const {data,error}=await sb.rpc('create_family',{p_name:String(fd.get('name')).trim(),p_display_name:String(fd.get('display_name')).trim()});if(error)throw error;localStorage.setItem('fh_family_id',data);await families();render()}
+ else if(form.id==='join-family-form'){const {data,error}=await sb.rpc('join_family',{p_invite:String(fd.get('invite')).trim(),p_display_name:String(fd.get('display_name')).trim()});if(error)throw error;localStorage.setItem('fh_family_id',data);await families();render()}
+ }catch(err){fail(err)}finally{state.busy=false;if(btn&&document.contains(btn))btn.disabled=false}
+});
+init().catch(e=>{$('app').innerHTML=`<div class="login-page"><div class="login-card"><h1>Could not start Family Hub</h1><p>${esc(e.message)}</p><button onclick="location.reload()">Reload</button></div></div>`;console.error(e)});
+})();

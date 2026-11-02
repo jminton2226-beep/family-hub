@@ -1,0 +1,111 @@
+/* Family Hub 2.0 — append-only refinements, TV-expanded calendar, rewards, and remote. */
+.view-indicator {font-family:'DM Sans',sans-serif;font-size:11px;font-weight:800;color:#7655ad;background:#e5d7f8;padding:5px 9px;border-radius:99px;letter-spacing:0;white-space:nowrap}
+.v2-calendar .cal-grid {flex:1;min-height:0}
+.cal-day {min-width:0}
+.tv-point-footer {border-top:1px solid #b8d5b2;padding-top:9px;margin-top:auto;display:flex;gap:7px;flex-wrap:wrap;align-items:center;font-size:11px;color:#53764e}
+.tv-point-footer b {color:#31552e;font-weight:900}
+.chore-label small {display:block;font-size:11px;font-weight:500;color:#687e67;margin-top:4px}
+.points-pill {display:inline-block;border-radius:50px;background:#fff2c9;color:#76521b;padding:5px 7px;font-size:11px;font-weight:800;white-space:nowrap}
+.tv-expanded-content {flex:1;min-height:0;display:flex}
+.tv-expanded .calendar-panel {flex:1;min-width:0;padding:18px 24px}
+.tv-expanded .cal-title {font-size:27px}
+.tv-expanded .cal-span {font-size:16px}
+.schedule-scroll {min-height:0;overflow:auto;flex:1;border:1px solid #e6daef;border-radius:12px;background:white}
+.schedule-view {height:100%;min-width:740px;display:flex;flex-direction:column}
+.schedule-headers,.schedule-body,.schedule-dinners {display:grid;grid-template-columns:64px repeat(7,minmax(0,1fr));}
+.schedule-day-head,.time-header {padding:12px 4px;text-align:center;border-bottom:1px solid #e6daef;border-right:1px solid #eee7f2;background:#f8f4fb;font-weight:800;font-size:13px;white-space:nowrap}
+.schedule-day-head.selected {background:#e7d8fa;color:#51397b}
+.schedule-body {flex:1;min-height:420px;position:relative;background:white}
+.schedule-hour-col {position:relative;border-right:1px solid #e1d7ea;background:#faf8fc}
+.schedule-hour-col span {position:absolute;font-size:10px;color:#927fa4;left:5px;transform:translateY(-45%)}
+.schedule-column {position:relative;border-right:1px solid #ede6f3;background-image:repeating-linear-gradient(to bottom,transparent 0,transparent calc(100% / 14 - 1px),#f0ebf4 calc(100% / 14 - 1px),#f0ebf4 calc(100% / 14));}
+.schedule-column.selected {background-color:#fcf9ff}
+.timed-event {position:absolute;left:3px;right:3px;background:#dcd0f5;border-left:3px solid #7456b0;border-radius:5px;padding:5px 6px;color:#493576;overflow:hidden;font-size:12px;line-height:1.2;min-height:23px;z-index:2}
+.timed-event b,.timed-event small {display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.timed-event small {font-size:10px;color:#745891;margin-top:3px}
+.schedule-dinners {flex-shrink:0;min-height:55px;background:#e7f2e8;border-top:2px solid #c6e0c9}
+.dinner-week {border-right:1px solid #d1e4d4;padding:9px 5px;font-size:11px;line-height:1.3;color:#336646;font-weight:700;overflow-wrap:anywhere}
+.dinner-heading {font-size:11px;align-self:center;padding:4px;color:#57735c;font-weight:800}
+.day-timeline {min-height:0;flex:1;overflow:auto;padding:2px 10px;background:white;border-radius:12px;border:1px solid #ebe0f4}
+.hour-line {min-height:54px;display:grid;grid-template-columns:80px 1fr;border-bottom:1px solid #e9e4ec;gap:8px;padding:5px}
+.hour-line>span {font-size:11px;color:#8b7c98;font-weight:700}
+.single-event {background:#e7ddf8;color:#503a79;padding:7px 10px;border-left:4px solid #815fbe;border-radius:6px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.single-event small {font-size:11px}
+.single-dinner {background:#e4f3e6;color:#336849;padding:12px;border-radius:8px;font-weight:800;margin-top:10px}
+.agenda-large {min-height:0;flex:1;overflow:auto;border-radius:12px;background:white;padding:4px 12px}
+.agenda-large-row {display:grid;grid-template-columns:140px 1fr;gap:18px;border-bottom:1px solid #f0ecf4;padding:12px 4px;font-size:14px}
+.agenda-large-row>strong {color:#615078}
+.agenda-large-event {display:flex;justify-content:space-between;gap:12px;padding:3px 0}
+.agenda-large-event small {color:#827492}
+.agenda-large-dinner {font-size:12px;margin-top:5px;color:#447250}
+.muted {color:#aaa0ad;font-size:12px}
+/* All-day events appear separately from time slots. */
+.schedule-allday{display:grid;grid-template-columns:64px repeat(7,minmax(0,1fr));background:#f9f5fc;border-bottom:1px solid #e9ddf1;min-height:34px}
+.allday-label{font-size:10px;font-weight:800;color:#867194;padding:7px 3px;text-align:center}
+.schedule-allday-cell{border-right:1px solid #eee6f4;padding:4px;min-width:0}
+.allday-event,.daily-allday{background:#efe5fc;border-left:3px solid #8162b5;border-radius:4px;color:#604484;padding:5px;font-size:11px;font-weight:700;overflow:hidden;text-overflow:ellipsis}
+.daily-allday{margin:5px 0}
+.phone-shop-row{display:flex;align-items:center;gap:8px;border-bottom:1px solid #efe9f3;padding:11px 0}
+.phone-shop-row .shop-name{flex:1;text-align:left;border:0;background:none;color:var(--ink);font-weight:700;font-size:13px;min-width:0}
+.phone-shop-row .shop-name.done{text-decoration:line-through;color:#a9a1ae}
+.phone-shop-row small{color:#9a8ca6;font-size:11px}
+/* iPhone: keep navigation usable with seven tabs, no horizontal page movement */
+.phone-tabs.v2-tabs {display:flex;justify-content:space-around;gap:0;padding-left:3px;padding-right:3px}
+.phone-tabs.v2-tabs .tab-button {min-width:0;flex:1;font-size:9px;padding:6px 0}
+.phone-tabs.v2-tabs .tab-button span {font-size:19px}
+.view-switch {display:flex;gap:5px;padding:4px;background:#eee8f4;border-radius:12px;margin-bottom:13px;overflow-x:auto}
+.view-switch button {min-width:max-content;border:0;background:transparent;padding:9px 11px;border-radius:9px;font-size:12px;font-weight:800;color:#806c92}
+.view-switch button.selected {background:white;color:#5b3c91;box-shadow:0 1px 5px #b4aac14a}
+.nav-calendar {text-align:center}
+.nav-calendar .card-section-title {gap:7px;font-size:12px}
+.nav-calendar .card-section-title span {max-width:48%;line-height:1.35}
+.phone-calendar-grid {padding:8px !important}
+.phone-cal-scroll {min-width:0;overflow-x:auto}
+.phone-calendar-grid .cal-grid {height:auto;min-height:470px;grid-template-rows:unset !important;grid-auto-rows:minmax(87px,auto)}
+.phone-calendar-grid .cal-day {padding:4px;min-height:88px;overflow:hidden}
+.phone-calendar-grid .day-number {font-size:12px}
+.phone-calendar-grid .day-event {font-size:9px;max-height:24px;overflow:hidden}
+.phone-calendar-grid .day-dinner {font-size:8px;min-height:16px;overflow:hidden}
+.phone-week {padding:7px !important}
+.phone-week .schedule-scroll {overflow:auto;max-height:540px}
+.phone-week .schedule-view {min-width:920px;height:510px}
+.phone-week .schedule-day-head {font-size:12px}
+.phone-week .schedule-body {min-height:400px}
+.phone-week .timed-event {font-size:11px}
+.v2-subtitle {margin:20px 0 10px;font-size:16px}
+.quiet-count {margin-left:auto;font-size:11px;color:#aa9bab}
+.phone-chore-row {display:flex;align-items:center;gap:11px;border-bottom:1px solid #eee7f1;padding:13px 0}
+.phone-chore-row input,.phone-shop-row input {width:23px;height:23px;accent-color:#7553b7;flex-shrink:0}
+.chore-main {text-align:left;flex:1;min-width:0;border:0;background:none;padding:0;color:#343047}
+.chore-main strong,.chore-main small {display:block}
+.chore-main small {font-size:11px;color:#80768e;margin-top:3px}
+.demo-actor {display:flex;justify-content:space-between;align-items:center;gap:8px;background:#f9f5ff;border-radius:9px;padding:8px;margin-bottom:8px;font-size:12px}
+.demo-actor select {border:1px solid #ded3e9;padding:7px;border-radius:8px;background:white}
+.simple-row {display:flex;justify-content:space-between;align-items:center;gap:8px;border-bottom:1px solid #eee7f1;padding:11px 0}
+.simple-row>div {min-width:0}
+.simple-row b,.simple-row small {display:block}
+.simple-row small {color:#8a8091;font-size:11px;margin-top:3px}
+.wallet-grid {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+.wallet-card {background:#f4ecfb;padding:14px;border-radius:13px}
+.wallet-card small {display:block;color:#77658a;font-weight:700}
+.wallet-card b {display:block;font-size:28px;color:#674199;margin-top:5px}
+.reward-row,.history-row {display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 0;border-bottom:1px solid #f0eaf3}
+.reward-row>div:first-child,.history-row>span {min-width:0;flex:1}
+.reward-row b,.reward-row small,.history-row b,.history-row small {display:block}
+.reward-row small,.history-row small {font-size:11px;color:#887e90;margin-top:3px}
+.reward-actions {display:flex;gap:6px;align-items:center}
+.history-row strong {font-size:16px}
+.history-row .earned {color:#2e9458}
+.history-row .spent {color:#ae5a57}
+#adjust-form .primary-btn,#settings-form .primary-btn {margin-top:12px}
+.remote-screen {background:linear-gradient(145deg,#f0e8fc,#e4d2f7);border:6px solid #463c5d;border-radius:12px;box-shadow:0 8px 18px #5c456433;padding:22px;display:flex;flex-direction:column;align-items:center;gap:7px;margin:13px 0 23px}
+.remote-screen span {font-size:33px}
+.remote-screen b {color:#563e80;font-size:20px}
+.remote-screen small {color:#746487}
+.remote-nav {display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px;margin:12px 0 15px}
+.remote-nav button {padding:10px 3px;font-size:11px}
+.setting-label {font-size:12px;font-weight:800;color:#745f86;margin-bottom:8px}
+@media(max-width:460px){.phone-calendar-grid .cal-day {padding:2px;min-height:83px}.phone-calendar-grid .day-event {font-size:8px}.phone-calendar-grid .day-dinner {font-size:7px}.phone-tabs.v2-tabs .tab-button {font-size:8px}.phone-tabs.v2-tabs .tab-button span {font-size:17px}}
+
+/* Timeline range is computed from actual events, including early/late appointments. */
+.schedule-column {background-size:100% calc(100% / var(--schedule-hours,14));background-image:linear-gradient(to bottom,transparent calc(100% - 1px),#f0ebf4 calc(100% - 1px));}
