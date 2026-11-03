@@ -1,6 +1,6 @@
 /* Offline-ready static shell. Shared Supabase data still requires connectivity. */
-const CACHE = 'family-hub-shell-v2-1';
-const ASSETS = ['./', './index.html', './styles.css', './v2.css', './app.js', './config.js', './manifest.webmanifest', './assets/icon.svg', './assets/apple-icon.png'];
+const CACHE = 'family-hub-shell-v3-1';
+const ASSETS = ['./', './index.html', './styles.css', './v2.css', './v3.css', './app.js', './config.js', './manifest.webmanifest', './assets/icon.svg', './assets/apple-icon.png'];
 self.addEventListener('install', e => e.waitUntil(
   caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())
 ));
